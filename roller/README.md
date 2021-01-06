@@ -17,10 +17,10 @@ Install the development version from GitHub via the package "devtools":
 # install.packages("devtools") 
 
 # install "roller" (without vignettes):
-# devtools::install_github("yulanrong/roller")
+# devtools::install_github("yulanrong/R/roller")
 
 # install "roller" (with vignettes):
-# devtools::install_github("yulanrong/roller", build_vignettes = TRUE)
+# devtools::install_github("yulanrong/R/roller", build_vignettes = TRUE)
 ```
 
 ### Usage
