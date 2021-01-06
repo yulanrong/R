@@ -1,0 +1,80 @@
+---
+title: "Getting Started with roller"
+author: "Yulan Rong"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to roller}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, echo = FALSE, message = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+library(roller)
+```
+
+## Rolling an Object
+
+The package "roller" implements functions for simulating rolling an object like a coin or a die multiple times, and to visualize the relative frequencies using barchart for rolls.
+
+
+## Creating a Device
+
+The first step is to create a "device" object with the function `device()`. The output displays the class of the object, and a tabular display of the sides and the associated probabilities:
+
+```{r}
+fair_coin <- device() 
+fair_coin
+```
+
+By default, `device()` creates a fair coin with two sides and identical probability 0.5 with object "device". 
+
+You can change the default by using arguments 'sides' and 'prob':
+```{r}
+weird_die <- device(
+sides = c('i', 'ii', 'iii', 'iv'), 
+prob = rep(1/4, 4))
+weird_die
+```
+
+You can use function `is.device()` to check if a given object is of class "device" :
+```{r}
+is.device(weird_die)
+```
+
+## Rolling the device
+
+When you have created a device, you can use the function `roll()` to roll your device with a given 'times' you like：
+
+```{r}
+set.seed(123)
+fair_50rolls <- roll(fair_coin, times = 50) 
+fair_50rolls
+```
+
+The `summary()` function outputs an object "summary.rolls" with a list containing a data frame called freqs with 3 columns:
+```{r}
+summary(fair_50rolls)
+```
+
+## Plot of Relative Frequencies
+
+You can use the function `plot()` to create a barchart with the relative 
+frequencies of a series of rolls:
+
+```{r, fig.show='hold'}
+plot(fair_50rolls)
+```
+
+## Additional Method 
+
+You can extract, replace the value of a given roll, or add more rolls:
+```{r}
+fair_50rolls[1]
+fair_50rolls[1] <- 1
+fair_50rolls[1]
+summary(fair_50rolls)
+fair_60rolls <- fair_50rolls + 10
+summary(fair_60rolls)
+```

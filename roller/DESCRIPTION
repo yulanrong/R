@@ -1,0 +1,19 @@
+Package: roller
+Type: Package
+Title: Functions for Rolling an Object Multiple Times
+Version: 0.1.0
+Author: Yulan Rong
+Maintainer: Yulan Rong
+Description: Provides functions to simulate rolling an object multiple times.
+License: GPL-2
+Encoding: UTF-8
+LazyData: true
+Collate:
+    device.R
+    roll.R
+    plot-roll.R
+RoxygenNote: 6.1.1
+Suggests: knitr,
+    rmarkdown,
+    testthat
+VignetteBuilder: knitr
