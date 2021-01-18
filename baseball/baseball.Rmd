@@ -3,8 +3,7 @@ title: "Predict 2012 Baseball Players' Salaries"
 author: "Yulan Rong"
 date: "12/10/2019"
 output:
-  html_document:
-    df_print: paged
+  rmarkdown::github_document
 ---
 
 
