@@ -1,0 +1,260 @@
+---
+title: "Predict 2012 Baseball Players' Salaries"
+author: "Yulan Rong"
+date: "12/10/2019"
+output:
+  rmarkdown::github_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(dplyr)
+library(glmnet)
+library(car)
+library(leaps)
+
+```
+
+##### The goal of this project is to predict salaries of baseball players by analyzing data from the 2012 baseball season from Sean Lahmann's database.
+
+#### Data Exploration and Feature Creation 
+```{r}
+load(url("http://www.stat.berkeley.edu/users/nolan/data/baseball2012.rda"))
+head(baseball)
+dim(baseball)
+dat = baseball[, -(1:6)]
+head(dat)
+
+AVG = dat$H / dat$AB
+dat$AVG = AVG
+CAVG = dat$CH / dat$CAB
+dat$CAVG = CAVG
+
+OBP = 100 * (dat$H + dat$BB) / (dat$AB + dat$BB)
+dat$OBP = OBP
+COBP = 100 * (dat$CH + dat$CBB) / (dat$CAB + dat$CBB)
+dat$COBP = COBP
+
+AB.per = dat$CAB / dat$years
+dat$AB.per = AB.per
+H.per = dat$CH / dat$years
+dat$H.per = H.per
+HR.per = dat$CHR / dat$years
+dat$HR.per = HR.per
+R.per = dat$CR / dat$years
+dat$R.per = R.per
+RBI.per = dat$CRBI / dat$years
+dat$RBI.per = RBI.per
+
+dat$POS[dat$POS == '2B'| baseball$POS == 'SS' | 
+          baseball$POS == 'C'|baseball$POS == 'CF'] = 1
+dat$POS[dat$POS != 1] = 0
+dat$POS = as.factor(dat$POS)
+
+dat$threetofive = factor(ifelse(
+  (dat$years >= 3 & dat$years <= 5), 1, 0))
+dat$oversix = factor(ifelse((dat$years >= 6), 1, 0))
+
+dat$salary = log(dat$salary)
+dat$CAB = log(dat$CAB)
+
+dat$G_batting = NULL
+
+dat = dat[!is.na(dat$salary),]
+
+pairs(~salary + years + CHR +CAVG + CR + COBP + CAB +CH, data = dat)
+ggplot(dat, aes(x = POS, y = salary)) + geom_boxplot() + 
+  labs(title = "Position and salary", x = 'Position', y = 'salary')
+ggplot(dat, aes(x = CAB, y = salary)) + geom_point() + 
+  labs(title = "CAB and salary", x = 'CAB', y = 'salary')
+ggplot(dat, aes(x = COBP, y = salary)) + geom_point() + 
+  labs(title = "career on-base percentage and salary", 
+       x = 'career on-base percentage', y = 'salary')
+
+```
+
+
+#### Data Analysis 
+##### 1. Fit a simple model to predict salaries.
+```{r}
+dat$log.CR = log(dat$CR + 1)
+
+simpleModel = lm(salary ~ threetofive + oversix + log.CR + 
+                   oversix:log.CR + threetofive:log.CR,, data = dat)
+summary(simpleModel)
+
+plot(simpleModel$fitted.values, simpleModel$residuals, xlab = "fitted values", ylab = "residuals")
+abline(h = 0, col = 'red')
+# we can see the variance of the residual is not constant since 
+# when fitted value increases, residuals spread out.
+
+qqnorm(simpleModel$residuals)
+qqline(simpleModel$residuals)
+# from the residual qq plot we can see that the points on the left side
+# are not on the line. So the residuals are not enough normally
+# distributed. this model is not perfect.  
+```
+
+##### 2.check for outliers, leverage and influential observation.
+```{r}
+# check for leverage.
+leveragePlots(simpleModel)
+X <- matrix(c(rep(1,421),dat$log.CR, 
+              dat$threetofive, dat$oversix),421,4) 
+H <- X %*% solve(t(X) %*% X) %*% t(X)
+h = diag(H)
+# according to Fox, A rough cutoff for noteworthy 
+# hat-values is hi > 2h_hat = 2(k+1)/n.
+h.mean <- (4+1)/nrow(dat)
+# check if there's leverage point that exceed twice of the h. 
+sortedh <- sort(h, decreasing=TRUE, index.return=TRUE) 
+unusual <- sortedh$ix[sortedh$x > 2*h.mean]
+ggplot(dat,aes(x = log.CR, y = salary)) +
+geom_point() + geom_point(data = dat[unusual,], aes(x = log.CR, y = salary), color = "red") + labs (x = "log career run", y = "log salary", title = "Leverage in red")
+
+# check for outliers
+outlierTest(simpleModel) 
+# the outlier of this model is row 500 and row 100
+qqPlot(simpleModel, main = "QQ Plot")
+S_E2=sum(simpleModel$residuals^2)/(nrow(dat)-4-1)
+standE=simpleModel$residuals/(sqrt(S_E2)*sqrt(1-h))
+# the studentized residuals for all the points.
+studE=standE*sqrt((421 - 4 -2)/(421-4-1-standE^2))
+abs_studE = abs(studE)
+a = dat
+a$abs_studE = abs_studE
+# 6 observations with the largest absolute values of the studentized residuals:
+head(a[order(-abs_studE),]) 
+# when p =0.05, t-test= 1.649, so set +-1.649 as bounds of outliers.
+sorted_studE <- sort(abs_studE, decreasing=TRUE, index.return=TRUE)
+unusual_stud <- sorted_studE$ix[sorted_studE$x < -1.649 
+                                | sorted_studE$x > 1.649]
+ggplot(data = dat, aes(x = log.CR, y = salary),) + geom_point() + geom_point(data = dat[unusual_stud,], aes(x = log.CR, y = salary), color = "red") + labs (x = "log career run", y = "log salary", title = "outlier in red")
+
+
+# H0: it's not an outlier.
+Emax=max(abs_studE)
+# Hypothesis test without Bonferroni correction:
+p1=1-pt(Emax,421-4-2)
+p1
+# Hypothesis test with Bonferroni correction:
+ptrue=2*421*p1
+ptrue
+# since ptrue is less than 0.05, so outliers exist.
+
+# check influential observation
+dis = cooks.distance(simpleModel)
+temp = dat
+temp$distance = dis
+# 6 observations that have largest values of Cook's distance.
+head(temp[order(-dis),])
+sortedCook = sort(dis, decreasing = TRUE, index.return = TRUE)
+criterion = 4/(421-4-1)
+influntial = sortedCook$ix[sortedCook$x > criterion]
+ggplot(data = dat, aes(x = log.CR, y = salary)) + geom_point() + geom_point(data = dat[influntial,], aes(x = log.CR, y = salary), color = "red") + labs (x = "log career run", y = "log salary", title = "influential in red")
+```
+
+##### 3 Fit a linear least-squares regression model
+```{r}
+test = lm(salary~.,data = dat)
+summary(test)
+# from the Pr(>|t|), I drop the variables with high Pr.
+todrop = c("CR", "POS", "AVG", "SF", "X3B", "PO", "CAB", "E", "A", "SH", "OBP", "H.per")
+dat1 = dat[, !(names(dat) %in% todrop)]
+fullmod = lm(salary~., data = dat1)
+summary(fullmod)
+```
+
+##### 4 Find 10 best models using regsubsets.
+```{r}
+bestfit = regsubsets(salary~., data = dat1, method = "forward", nvmax = 33, nbest = 10)
+bestfitsum = summary(bestfit)
+plot(bestfitsum$adjr2, xlab = "number of variables", ylab = "adjusted R squared")
+plot(bestfitsum$rss, xlab = "number of variables", ylab = "RSS")
+plot(bestfitsum$bic, xlab = "number of variables", ylab = "BIC")
+plot(bestfit, scale = "bic")
+```
+
+##### 5 Find 5 best models using BIC
+```{r}
+bic = bestfitsum$bic
+bic = sort(bic, decreasing = FALSE, index.return = TRUE)
+best5 = head(bic$ix, 5)
+# best 5 variable model for each is different
+coef(bestfit, best5)
+```
+
+##### 6 Cross validation
+```{r}
+set.seed(200)
+permutation <- sample(1:nrow(dat1))
+folds <- c(rep(1:10, each = nrow(dat1)/10), 10) 
+X <- model.matrix(salary ~ ., dat1)
+avg_test_MSE <- rep(0,5)
+for(i in 1:5){
+  test_MSE <- rep(0,10)
+  for(j in 1:10){
+    idx_train <- permutation[folds != j]
+    idx_test <- permutation[folds == j]
+    vars <- bestfitsum$which[best5[i],]
+    X_best_subset <- X[,vars]
+    mod <- lm(dat1$salary ~ X_best_subset - 1, subset = idx_train) 
+    X_test <- X_best_subset[idx_test,]
+    test_predictions <- X_test %*% as.matrix(coef(mod))
+    test_MSE[j] <- mean((dat1$salary[idx_test] - test_predictions)^2)
+  }
+  avg_test_MSE[i] <- mean(test_MSE) 
+}
+
+plot(sqrt(avg_test_MSE), xlab = "Model Ranking in BIC", ylab = "Root Mean Squared Error", pch = 20, cex = 2)
+avg_test_MSE
+which.min(avg_test_MSE)
+# from the 10 folds cross validation, model 5 has the lowesr average 
+# test MSE among the 5 best models. 
+```
+
+##### 7 LASSO model
+```{r}
+X = model.matrix(salary~., dat1)[, -1]
+y = dat1$salary
+lambda.grid = 10^seq(10, -2, length = 100)
+lasso.mod = glmnet(x = X, y = y, alpha = 1)
+cv.lasso.mod = cv.glmnet(x = X, y = y, alpha = 1, nfolds = 10)
+
+plot(cv.lasso.mod)
+
+# the best（suitable) lasso lambda, which has the min lambda:
+best.lasso.lam = cv.lasso.mod$lambda.min
+best.lasso.lam 
+# this best lasso lambda minimizes the mean squared error. 
+
+
+plot(lasso.mod, xvar = "lambda")
+lines(c(log(best.lasso.lam), log(best.lasso.lam)), c(-1000, 1000), lty = "dashed", lwd = 3)
+
+best.lasso.coefs <- predict(lasso.mod, type = 'coefficients', s = best.lasso.lam)
+
+# the non zero coefficients:
+best.lasso.coefs
+# except GS, others have non zero coefficients, 
+# but many of them's coefficients are close to zero.
+
+```
+
+##### 8 Conclusion
+```{r}
+min(cv.lasso.mod$cvm)
+avg_test_MSE
+min(avg_test_MSE)
+# by comparing the CV MSE from step 6 and LASSO, LASSO has higher 
+# average MSE than the best 5 models' average Test MSE, so using 
+# BIC method for choosing the best model is better than using LASSO.
+# Thus, the best model in BIC method, which is model 5 will have a  
+# good performance to predict this dataset.
+
+
+coef(bestfit, best5)[[5]] # best model among others above.
+```
+
