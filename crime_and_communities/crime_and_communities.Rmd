@@ -1,0 +1,248 @@
+---
+title: "Crime and Communities"
+author: "Yulan"
+output:
+  rmarkdown::github_document
+---
+
+## Introduction
+
+The crime and communities dataset contains crime data from communities in the United States. The data combines socio-economic data from the 1990 US Census, law enforcement data from the 1990 US LEMAS survey, and crime data from the 1995 FBI UCR. More details can be found at https://archive.ics.uci.edu/ml/datasets/Communities+and+Crime+Unnormalized.
+
+The dataset contains 125 columns total; $p=124$ predictive and 1 target (ViolentCrimesPerPop). There are $n=1994$ observations. These can be arranged into an $n \times p = 1994 \times 127$ feature matrix $\mathbf{X}$, and an $n\times 1 = 1994 \times 1$ response vector $\mathbf{y}$ (containing the observations of ViolentCrimesPerPop).
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("ggplot2")
+library("datasets")
+library("dplyr")
+library("missForest")
+library("moments")
+library("data.table")
+library("Hmisc")
+library("rms")
+library("corrgram")
+library("hydroGOF")
+library("e1071")
+library("rpart")
+library('rminer')
+library("randomForest")
+library("fBasics")
+library(glmnet)
+library(leaps)
+
+```
+
+## Set up the dataset
+```{r}
+library(readr)
+CC <- read_csv("crime_and_communities_data.csv")
+print(dim(CC))
+y <- CC$ViolentCrimesPerPop
+X <- subset(CC, select = -c(ViolentCrimesPerPop))
+```
+
+
+## Dataset exploration
+- Which variables are categorical versus numerical?
+```{r}
+str(CC)
+# from the structure we can see that all of the variables are numberical,
+# but "MedNumBR" can be a categorical variable since it only has 4 values:
+# 1, 2, 3, and 4.
+```
+
+- What are the general summary statistics of the data? How can these be visualized?
+```{r}
+summary(CC)
+```
+
+- Is the data normalized? Should it be normalized?
+```{r}
+# use Shapiro test to check normality:
+sha = lapply(CC, shapiro.test)
+sha1 = as.data.frame(t(sapply(sha, "[", c("statistic", "p.value"))))
+sha2 = sha1 %>% select(p.value)
+sh = setDT(sha2, keep.rownames = TRUE)[]
+# check if any variables has p-value < 0.05, which means not normalized.
+length(sh$p.value[sh$p.value < 0.05])
+# all the variables' p-value are less than 0.05, 
+# so the data is not normalized.
+
+# I think the data that have severe skewness should be normalize 
+# since variables in great distince scales may affect the performance of fitted models.
+
+
+# check for skewness:
+skew = lapply(CC, skewness)
+skew = sapply(skew, '[')
+skewn = as.data.frame(skew)
+skew1 = skewn %>% select(skew)
+skew2 = setDT(skew1, keep.rownames = TRUE)[]
+skew2
+high.skew = c(colnames(CC[,1]), colnames(CC[,11]), colnames(CC[,24]),colnames(CC[,28]), colnames(CC[,50]), colnames(CC[,52]), colnames(CC[,72]), colnames(CC[,92]), colnames(CC[,93]), colnames(CC[,116]))
+
+# from the table we can see that some of the variables have great skewness:
+high.skew
+# these variables may need to normalize. some of the varibales are NA
+# after calculated skewness.
+
+
+# to normalize:
+normalize <- function(x) {
+  return((x-min(x))/(max(x)-min(x)))
+}
+newCC = CC
+newCC[,1] = normalize(newCC[,1])
+newCC[,11] = normalize(newCC[,11])
+newCC[,24] = normalize(newCC[,24])
+newCC[,28] = normalize(newCC[,28])
+newCC[,50] = normalize(newCC[,50])
+newCC[,52] = normalize(newCC[,52])
+newCC[,72] = normalize(newCC[,72])
+newCC[,92] = normalize(newCC[,92])
+newCC[,93] = normalize(newCC[,93])
+newCC[,116] = normalize(newCC[,116])
+
+```
+
+- Are there missing values in the data? How should these missing values be handled? 
+```{r}
+colSums(is.na(newCC))
+# Yes, there are some missing values in the data. 
+# These missing values are 1675 empty observations, which are hugh amount
+# by comparing with total observations of each row(1994 obs).
+# so I will exlude the missing values.
+
+newCC = na.omit(newCC)
+#after omitting the missing rows, we only have 319 observations of each columns.
+
+```
+
+- Can the data be well-represented in fewer dimensions?
+```{r}
+# fit a full simple model, and then drop the variables that have high Pr(>|t|).
+# The asterisks following the Pr(>|t|) provide a visually accessible 
+# way of assessing whether the statistic met various alpha criterion.
+
+a = lm(ViolentCrimesPerPop~., data = newCC)
+summary(a)
+# I will drop variables with Pr > 0.7 to avoid overfitting.
+
+todrop = c("racepctblack", "racePctWhite", "racePctAsian", "racePctHisp", "pctWPubAsst", "perCapInc", "whitePerCap", "AsianPerCap", "HispPerCap", "PctOccupMgmtProf", "MalePctDivorce", "MalePctNevMarr", "FemalePctDiv", "TotalPctDiv", "PctTeen2Par", "PctWorkMomYoungKids", "PctWorkMom", "PctImmigRec8", "PctRecImmig10", "PctNotSpeakEnglWell", "PersPerOccupHous","PctHousNoPhone", "OwnOccQrange", "RentQrange", "MedOwnCostPctIncNoMtg", "NumStreet", "PctSameCity85", "LemasSwFTPerPop", "LemasSwFTFieldOps", "LemasSwFTFieldPerPop", "LemasTotReqPerPop", "PolicPerPop", "PctPolicWhite", "PctPolicBlack","PctPolicHisp", "PctPolicAsian", "PctPolicMinor","NumKindsDrugsSeiz")
+
+length(todrop)
+newdat = newCC[,!names(newCC) %in% todrop]
+
+# do the process again to drop more variables.
+b=lm(ViolentCrimesPerPop~., data = newdat)
+summary(b)
+todrop1 = c("agePct12t21", "agePct12t29", "agePct16t24", "agePct65up", "PctLess9thGrade","PersPerFam", "MedNumBR", "PctHousOccup", "PctBornSameState", "LemasPctOfficDrugUn", "pctWRetire", "OwnOccLowQuart")
+newdat = newdat[,!names(newdat) %in% todrop1]
+dim(newdat)
+summary(lm(ViolentCrimesPerPop~., data = newdat))
+```
+
+
+## Perform Regression Analysis
+
+To develop a model to predict ViolentCrimesPerPop using the 124 features (or some subset of them) stored in $\mathbf{X}$, I'm going to try several different methods, and use model selection methods to determine which model is best. Also, keeping a held-out test set to evaluate the performance of the model.
+
+#### prepare train and test datasets
+```{r}
+set.seed(123)
+i = sample(nrow(newdat), 0.8*nrow(newdat), replace = F)
+hold = setdiff(1:nrow(newdat), i)
+train = newdat[i,]
+test = newdat[hold,]
+ytrain <- train$ViolentCrimesPerPop
+xtrain  <- as.matrix(subset(train, select = -c(ViolentCrimesPerPop)))
+ytest <- test$ViolentCrimesPerPop
+xtest <- as.matrix(subset(test, select = -c(ViolentCrimesPerPop)))
+```
+
+#### Use simple linear regression
+```{r}
+simple.fit = lm(ViolentCrimesPerPop~., data = train)
+plot(simple.fit)
+simple.fit.sum = summary(simple.fit)
+simple.fit.sum$r.squared
+simple.fit.sum$adj.r.squared
+
+
+# use predict to get the test mse.
+simple.test.mse = mean((test$ViolentCrimesPerPop - predict.lm(simple.fit, test))^2)
+```
+
+#### Use lasso regression
+```{r}
+lasso.fit = glmnet(xtrain, ytrain, alpha = 1)
+plot(lasso.fit)
+
+# use cross validation and compute test mse
+set.seed(123)
+cv.lasso = cv.glmnet(xtrain, ytrain, alpha = 1)
+plot(cv.lasso)
+bestlam = cv.lasso$lambda.min
+
+lasso.pred = predict(lasso.fit, s= bestlam, newx=xtest)
+lasso.test.mse = mean((lasso.pred - ytest)^2)
+```
+
+#### Use ridge regression
+```{r}
+ridge.fit = glmnet(xtrain, ytrain, alpha = 0)
+plot(ridge.fit)
+
+# use cross validation and compute test mse
+set.seed(123)
+cv.ridge = cv.glmnet(xtrain, ytrain, alpha = 0)
+plot(cv.ridge)
+bestlam = cv.ridge$lambda.min
+
+ridge.pred = predict(ridge.fit, s= bestlam, newx=xtest)
+ridge.test.mse = mean((ridge.pred - ytest)^2)
+```
+
+#### Use stepwise: forward method
+```{r}
+step.fit = regsubsets(ViolentCrimesPerPop~., data = train, method = "forward", nvmax = 74)
+step.fit.sum = summary(step.fit)
+plot(step.fit.sum$bic, xlab = "number of variables", ylab = "BIC")
+plot(step.fit.sum$rss, xlab = "number of variables", ylab = "RSS")
+plot(step.fit.sum$adjr2, xlab = "number of variables", ylab = "adj_R2")
+plot(step.fit.sum$cp, xlab = "number of variables", ylab = "CP")
+
+# display best 5 models
+bic = step.fit.sum$bic
+bic = sort(bic, decreasing = FALSE, index.return = TRUE)
+best5 = head(bic$ix, 5)
+
+# best 5 variable model for each is different
+coef(step.fit, best5)
+
+#find the best fit model from stepwise method
+validation_errors <- vector("double", length = 74)
+test_m = model.matrix(ViolentCrimesPerPop~., data = test)
+for(i in 1:74) {
+  coef_x <- coef(step.fit, id = i)                    
+  pred_x <- test_m[ , names(coef_x)] %*% coef_x           
+  validation_errors[i] <- mean((ytest - pred_x)^2)  
+}
+
+# plot validation errors
+plot(validation_errors, type = "b")
+
+# get the best model from test mse
+which.min(validation_errors)
+# so the 5th model is the best model using stepwise method.
+```
+
+#### Comparing the test mse for each methods
+```{r}
+c(simple.test.mse, lasso.test.mse, ridge.test.mse, min(validation_errors))
+
+```
+
+In conclusion, the smallest test mse among these methods is from ridge regression. so the model from ridge regression is the best fit for the data by comparing with above methods I use. However, since the test mse is still large of the ridge regression model, there could be a better model instead of the ridge. I would keep trying to find the better fit model in the future.
